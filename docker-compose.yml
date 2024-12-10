@@ -1,0 +1,168 @@
+version: '3.7'
+services:
+  cb-cloud-service:
+    image: ${CB_CLOUD_SERVICE_DOCKER_TAG}
+    container_name: cb-cloud-service
+    depends_on:
+      - postgres
+      - minio
+    ports:
+      - "8080:8080"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${CS_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+      - MINIO_URL=http://minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_USER}
+      - MINIO_SECRET_KEY=${MINIO_PASSWORD}
+      - TOKEN_TTL=${TOKEN_TTL}
+      - TOKEN_SECRET=${TOKEN_SECRET}}
+    networks:
+      monitoring:
+        aliases:
+          - cb-cloud-service
+
+  cb-bot-service:
+    image: ${CB_BOT_SERVICE_DOCKER_TAG}
+    container_name: cb-bot-service
+    depends_on:
+      - cb-cloud-service
+    ports:
+      - "8081:8090"
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - CB_URL=http://cb-cloud-service:8080
+      - TOKEN_TTL=${TOKEN_TTL}
+    networks:
+      monitoring:
+        aliases:
+          - cb-bot-service
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      monitoring:
+        aliases:
+          - prometheus
+
+  grafana:
+    build: './config/grafana'
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+    networks:
+      monitoring:
+        aliases:
+          - grafana
+
+  logstash:
+    container_name: logstash
+    image: docker.elastic.co/logstash/logstash:8.10.2
+    volumes:
+      - logstashdata01:/usr/share/logstash/data
+      - ./config/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    environment:
+      - xpack.monitoring.enabled=false
+      - ELASTIC_USER=elastic
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - ELASTIC_HOSTS=https://es:9200
+    ports:
+      - 5000:5000
+    networks:
+      monitoring:
+        aliases:
+          - cb-cloud-service
+
+  kibana:
+    container_name: kibana
+    image: docker.elastic.co/kibana/kibana:8.10.2
+    volumes:
+      - kibanadata:/usr/share/kibana/data
+    ports:
+      - 5601:5601
+    environment:
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=http://es:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+    networks:
+      monitoring:
+        aliases:
+          - cb-cloud-service
+
+  es:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    container_name: es
+    volumes:
+      - esdata01:/usr/share/elasticsearch/data
+    ports:
+      - 9200:9200
+    environment:
+      - node.name=es01
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+    networks:
+      monitoring:
+        aliases:
+          - cb-cloud-service
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+    networks:
+      monitoring:
+        aliases:
+          - minio
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${CS_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      monitoring:
+        aliases:
+          - postgres
+networks:
+  monitoring:
+
+volumes:
+  esdata01:
+    driver: local
+  kibanadata:
+    driver: local
+  logstashdata01:
+    driver: local
+  minio-data:
+    driver: local
+  postgres-data:
+    driver: local
